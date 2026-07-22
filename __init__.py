@@ -1,8 +1,9 @@
 import bpy
 
+from . import nla_action_loader
 from . import game_rig_generator
-from . import animation_baker
-from . import utils
+from . import action_baker
+from . import common
 
 
 class RGE_OT_clear_actions(bpy.types.Operator):
@@ -11,7 +12,7 @@ class RGE_OT_clear_actions(bpy.types.Operator):
     bl_options = {"UNDO"}
 
     def execute(self, context):
-        context.scene.RGE_action_items.clear()
+        context.scene.RGE_actions_to_bake.clear()
         return {"FINISHED"}
 
 class RGE_OT_load_actions_from_rigify_nla(bpy.types.Operator):
@@ -21,15 +22,14 @@ class RGE_OT_load_actions_from_rigify_nla(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        return context.scene.RGE_settings.rigify_rig != None
+        return common.find_rigify_rig() != None
 
     def execute(self, context):
         scene = context.scene
-        action_items = scene.RGE_action_items
-        settings = scene.RGE_settings
-        rigify_rig = settings.rigify_rig
+        action_items = scene.RGE_actions_to_bake
+        rigify_rig = common.find_rigify_rig()
 
-        scene.RGE_action_item_index = 0
+        scene.RGE_actions_to_bake_index = 0
         if rigify_rig != None and rigify_rig.animation_data != None:
             for nla_track in rigify_rig.animation_data.nla_tracks:
                 for nla_strip in nla_track.strips:
@@ -40,23 +40,6 @@ class RGE_OT_load_actions_from_rigify_nla(bpy.types.Operator):
 
         return {"FINISHED"}
 
-class RGE_UL_action_items(bpy.types.UIList):
-    def draw_item(
-        self, context, layout, data, item, icon, active_data, active_propname, index
-    ):
-        row = layout.row(align=True)
-        action = item.action
-
-        if action != None:
-            row.prop(item, "selected", text="")
-            row.prop(action, "name", text="", emboss=False, icon="ACTION")
-        else:
-            row.label(text="Missing Action", icon="ERROR")
-
-class RGE_PG_action_item(bpy.types.PropertyGroup):
-    action: bpy.props.PointerProperty(name="Action", type=bpy.types.Action)
-    selected: bpy.props.BoolProperty(default=True)
-
 class RGE_PT_main(bpy.types.Panel):
     bl_label = "Rigify Game Exporter"
     bl_space_type = "VIEW_3D"
@@ -65,58 +48,59 @@ class RGE_PT_main(bpy.types.Panel):
 
     def draw(self, context):
         layout = self.layout
-        scene = context.scene
-        settings = scene.RGE_settings
-        rigify_rig = settings.rigify_rig
+        rigify_rig = common.find_rigify_rig()
+        game_rig = common.find_game_rig()
 
-        col = layout.column(align=True)
-        col.label(text="Rigify Rig")
-
-        row = col.row(align=True)
-        row.prop(settings, "rigify_rig", text="", placeholder="Rigify Rig")
-        if settings.rigify_rig:
-            row.prop(settings.rigify_rig, "hide_viewport", text="")
-
-        col.label(text="Game Rig")
-        row = col.row(align=True)
-        row.prop(settings, "game_rig", text="", placeholder="Game Rig")
-        if settings.game_rig:
-            row.prop(settings.game_rig, "hide_viewport", text="")
-
-        layout.separator()
-
-        # ----------------------------
-        # Game Rig Generator
-        # ----------------------------
-        if not rigify_rig:
+        if rigify_rig == None:
             box = layout.box()
-            box.label(text="Select Rigify Rig", icon="INFO")
-        
+            box.label(text=f"Cannot find Rigify Rig ({common.RIGIFY_RIG_NAME})", icon="ERROR")
+            return
+
+        if game_rig == None:
+            self.draw_game_rig_generator(context, rigify_rig)
+        else:
+            self.draw_action_baker(context)
+
+    def draw_game_rig_generator(self, context, rigify_rig):
+        layout = self.layout
+
+        # show list of selected bones
+        if context.mode == 'POSE' and context.object == rigify_rig:
+            selected = context.selected_pose_bones or []
+
+            if len(selected) > 0:
+                header, body = layout.panel("selected_bones_subpanel", default_closed=True)
+                header.label(text=f"{len(selected)} Extra Bone(s) Selected")
+                if body != None:
+                    for bone in sorted(selected, key=lambda b: b.name):
+                        body.label(text=bone.name, icon='BONE_DATA')
+
+                    layout.separator()
+
         col = layout.column(align=True)
         col.scale_y = 2
-        col.enabled = rigify_rig is not None
         col.operator("rigify_game_exporter.generate_game_rig", icon="OUTLINER_OB_ARMATURE")
 
-        layout.separator()
+    def draw_action_baker(self, context):
+        layout = self.layout
+        scene = context.scene
 
-        # ----------------------------
-        # Action Baker
-        # ----------------------------
+        layout.label(text="Select Actions to Bake from Rigify Rig")
         row = layout.row(align=True)
         row.template_list(
             "RGE_UL_action_items",
-            "",
+            "actions_to_bake",
             scene,
-            "RGE_action_items",
+            "RGE_actions_to_bake",
             scene,
-            "RGE_action_item_index",
+            "RGE_actions_to_bake_index",
         )
 
         row = layout.row(align=True)
         col = row.column(align=True)
         col.operator(
             "rigify_game_exporter.load_actions_from_rigify_nla",
-            text="From NLA",
+            text="Load Rigify NLA",
             icon="NLA_PUSHDOWN",
         )
 
@@ -127,46 +111,40 @@ class RGE_PT_main(bpy.types.Panel):
             icon="TRASH",
         )
 
-        if not settings.rigify_rig:
-            box = layout.box()
-            box.label(text="Select Rigify Rig", icon="ERROR")
-        if not settings.game_rig:
-            box = layout.box()
-            box.label(text="Select Game Rig", icon="ERROR")
+        conflicting_action_items = common.find_conflicting_action_items(scene.RGE_actions_to_bake)
+        conflicting_action_item_count = len(conflicting_action_items)
+        if conflicting_action_item_count > 0:
+            header, body = layout.panel("conflicting_action_items_subpanel", default_closed=True)
 
-        for action_item in utils.find_conflicting_action_items(scene.RGE_action_items):
-            box = layout.box()
-            # TODO remove redundant renamed_action call
-            box.label(text=f"{action_item.action.name} -> {utils.renamed_action(action_item.action.name)}", icon="ERROR")
-            box.label(text="Action already exists")
+            selected_action_item_count = len([action_item for action_item in scene.RGE_actions_to_bake if action_item.selected])
+            if conflicting_action_item_count == selected_action_item_count:
+                header.label(text="All Selected Actions Already Exist")
+            else:
+                header.label(text=f"{conflicting_action_item_count} out of {selected_action_item_count} Selected Actions Already Exist")
+
+            if body != None:
+                for action_item in conflicting_action_items:
+                    # TODO remove redundant renamed_action call
+                    body.label(text=f"{action_item.action.name} -> {common.renamed_action(action_item.action.name)}", icon="ACTION")
+
+                layout.separator()
 
         row = layout.row(align=True)
         row.scale_y = 2
-        row.operator("rigify_game_exporter.bake_animations", icon="KEYTYPE_KEYFRAME_VEC")
-
-def poll_armature(self, object):
-    return object.type == "ARMATURE"
-
-class RGE_PG_settings(bpy.types.PropertyGroup):
-    rigify_rig: bpy.props.PointerProperty(name="Rigify Rig", type=bpy.types.Object, poll=poll_armature)
-    game_rig: bpy.props.PointerProperty(name="Game Rig", type=bpy.types.Object, poll=poll_armature)
-
-    # TODO why
-    clear_transform_before_baking: bpy.props.BoolProperty(default=False)
+        row.operator("rigify_game_exporter.bake_actions", icon="KEYTYPE_KEYFRAME_VEC")
 
 
 modules = ( 
+    common,
+    nla_action_loader,
     game_rig_generator,
-    animation_baker,
+    action_baker,
 )
 
 classes = (
     RGE_OT_clear_actions,
     RGE_OT_load_actions_from_rigify_nla,
-    RGE_UL_action_items,
-    RGE_PG_action_item,
     RGE_PT_main,
-    RGE_PG_settings,
  )
 
 def register():
@@ -176,17 +154,15 @@ def register():
     for cls in classes:
         bpy.utils.register_class(cls)
 
-    bpy.types.Scene.RGE_action_items = bpy.props.CollectionProperty(type=RGE_PG_action_item)
-    bpy.types.Scene.RGE_action_item_index = bpy.props.IntProperty()
-    bpy.types.Scene.RGE_settings = bpy.props.PointerProperty(type=RGE_PG_settings)
+    bpy.types.Scene.RGE_actions_to_bake = bpy.props.CollectionProperty(type=common.RGE_PG_action_item)
+    bpy.types.Scene.RGE_actions_to_bake_index = bpy.props.IntProperty()
 
 def unregister():
-    for module in modules:
-        module.unregister()
+    del bpy.types.Scene.RGE_actions_to_bake_index
+    del bpy.types.Scene.RGE_actions_to_bake
 
-    for cls in classes:
+    for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
 
-    del bpy.types.Scene.RGE_action_items
-    del bpy.types.Scene.RGE_action_item_index
-    del bpy.types.Scene.RGE_settings
+    for module in reversed(modules):
+        module.unregister()

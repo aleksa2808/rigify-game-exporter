@@ -1,5 +1,6 @@
 import bpy
 
+from . import common
 
 def is_bone_kept(bone):
     return bone.select or bone.use_deform
@@ -11,12 +12,13 @@ class RGE_OT_generate_game_rig(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        return context.scene.RGE_settings.rigify_rig != None
+        return common.find_rigify_rig() != None and common.find_game_rig() == None
 
     def execute(self, context):
-        scene = context.scene
-        settings = scene.RGE_settings
-        rigify_rig = settings.rigify_rig
+        rigify_rig = common.find_rigify_rig()
+
+        if rigify_rig == None or common.find_game_rig() != None:
+            return {'CANCELLED'}
 
         is_object_hidden = rigify_rig.hide_get()
         is_object_hidden_in_viewport = rigify_rig.hide_viewport
@@ -31,8 +33,7 @@ class RGE_OT_generate_game_rig(bpy.types.Operator):
 
         game_rig = rigify_rig.copy()
         # TODO check if there isn't one already
-        game_rig.name = "rig"
-        settings.game_rig = game_rig
+        game_rig.name = common.GAME_RIG_NAME
 
         game_rig.display_type = "SOLID"
         game_rig.show_in_front = True
@@ -137,6 +138,8 @@ class RGE_OT_generate_game_rig(bpy.types.Operator):
                     object.parent = game_rig
                     object.matrix_world = matrix_world
 
+        game_rig.hide_render = False
+
         return {"FINISHED"}
 
 
@@ -147,5 +150,5 @@ def register():
         bpy.utils.register_class(cls)
 
 def unregister():
-    for cls in classes:
+    for cls in reversed(classes):
         bpy.utils.unregister_class(cls)

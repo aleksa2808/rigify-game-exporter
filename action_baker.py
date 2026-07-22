@@ -1,7 +1,7 @@
 import bpy
 from bpy_extras import anim_utils
 
-from . import utils
+from . import common
 
 
 def clear_pose(object):
@@ -17,25 +17,27 @@ def clear_pose(object):
             case _:
                 bone.rotation_euler.zero()
 
-class RGE_OT_bake_animations(bpy.types.Operator):
-    bl_idname = "rigify_game_exporter.bake_animations"
-    bl_label = "Bake Animations"
+class RGE_OT_bake_actions(bpy.types.Operator):
+    bl_idname = "rigify_game_exporter.bake_actions"
+    bl_label = "Bake Actions to Game Rig"
     bl_info = {"UNDO"}
 
     @classmethod
     def poll(cls, context):
-        settings = context.scene.RGE_settings
-        action_items = context.scene.RGE_action_items
-        return settings.rigify_rig and settings.game_rig and len(utils.find_conflicting_action_items(action_items)) == 0
+        scene = context.scene
+        action_items = scene.RGE_actions_to_bake
+        selected_action_item_count = len([action_item for action_item in scene.RGE_actions_to_bake if action_item.selected])
+        conflicting_action_item_count = len(common.find_conflicting_action_items(action_items))
+        return common.find_rigify_rig() != None and common.find_game_rig() != None and len(action_items) > 0 and selected_action_item_count > conflicting_action_item_count
 
     def execute(self, context):
         scene = context.scene
-        settings = scene.RGE_settings
-        rigify_rig = settings.rigify_rig
-        game_rig = settings.game_rig
+        rigify_rig = common.find_rigify_rig()
+        game_rig = common.find_game_rig()
+        action_items = scene.RGE_actions_to_bake
 
-        if not rigify_rig or rigify_rig.type != "ARMATURE" or not game_rig or game_rig.type != "ARMATURE":
-            return {"CANCELLED"}
+        # TODO: why?
+        clear_transform_before_baking = False
 
         rigify_rig.hide_set(False)
         game_rig.hide_set(False)
@@ -56,11 +58,10 @@ class RGE_OT_bake_animations(bpy.types.Operator):
             game_rig_use_nla_backup = game_rig.animation_data.use_nla
             game_rig.animation_data.use_nla = False
 
-        if settings.clear_transform_before_baking:
+        if clear_transform_before_baking:
             clear_pose(rigify_rig)
             clear_pose(game_rig)
 
-        action_items = scene.RGE_action_items
         for action_item in action_items:
             # TODO this shouldn't change during the loop, right?
             if rigify_rig.animation_data:
@@ -75,11 +76,11 @@ class RGE_OT_bake_animations(bpy.types.Operator):
 
                     rigify_rig.animation_data.action = action
 
-                    if settings.clear_transform_before_baking:
+                    if clear_transform_before_baking:
                         clear_pose(rigify_rig)
                         clear_pose(game_rig)
 
-                    action_name = utils.renamed_action(action.name)
+                    action_name = common.renamed_action(action.name)
 
                     start_frame = int(action.frame_range[0])
                     end_frame = int(action.frame_range[1]) + 1
@@ -160,7 +161,7 @@ class RGE_OT_bake_animations(bpy.types.Operator):
         return {"FINISHED"}
 
 classes = [
-    RGE_OT_bake_animations,
+    RGE_OT_bake_actions,
 ]
 
 def register():
@@ -168,5 +169,5 @@ def register():
         bpy.utils.register_class(cls)
 
 def unregister():
-    for cls in classes:
+    for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
