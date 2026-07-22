@@ -1,0 +1,16 @@
+schema_version = "1.0.0"
+
+id = "rigify_game_exporter"
+version = "0.0.1"
+name = "Rigify Game Exporter"
+tagline = "Export game ready rigs from Rigify armatures"
+maintainer = "aleksa2808"
+type = "add-on"
+
+tags = ["Rigging", "Animation"]
+
+blender_version_min = "5.2.0"
+
+license = [
+  "SPDX:GPL-3.0-or-later",
+]
