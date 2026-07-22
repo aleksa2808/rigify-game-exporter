@@ -3,15 +3,14 @@ import bpy
 from . import common
 
 
-# TODO deduplicate with `common.find_conflicting_action_items()``
-def find_conflicting_action_items(context):
+def find_existing_nla_actions(context):
     action_items = context.scene.RGE_actions_to_load
     rigify_rig = common.find_rigify_rig()
 
     if rigify_rig == None or rigify_rig.animation_data == None or rigify_rig.animation_data.nla_tracks == None:
         return []
 
-    filtered_actions = []
+    existing_actions = []
     for action_item in action_items:
         if not action_item.selected:
             continue
@@ -30,9 +29,9 @@ def find_conflicting_action_items(context):
                 break
 
         if exists:
-            filtered_actions.append(action_item)
+            existing_actions.append(action_item)
 
-    return filtered_actions
+    return existing_actions
 
 class RGE_OT_refresh_actions(bpy.types.Operator):
     bl_idname = "rigify_game_exporter.refresh_actions"
@@ -85,7 +84,7 @@ class RGE_OT_load_actions_to_nla(bpy.types.Operator):
         actions = context.scene.RGE_actions_to_load
         selected_action_count = len([action for action in actions if action.selected])
 
-        return common.find_rigify_rig() != None and selected_action_count > len(find_conflicting_action_items(context))
+        return common.find_rigify_rig() != None and selected_action_count > len(find_existing_nla_actions(context))
 
     def execute(self, context):
         rigify_rig = common.find_rigify_rig()
@@ -124,6 +123,26 @@ class RGE_OT_load_actions_to_nla(bpy.types.Operator):
         self.report({'INFO'}, f"Added {added} actions to Rigify NLA")
         return {'FINISHED'}
 
+class RGE_PG_action_item(bpy.types.PropertyGroup):
+    action: bpy.props.PointerProperty(name="Action", type=bpy.types.Action)
+    selected: bpy.props.BoolProperty(default=True)
+
+    @property
+    def name(self):
+        return self.action.name
+
+class RGE_UL_action_items(bpy.types.UIList):
+    def draw_item(
+        self, context, layout, data, item, icon, active_data, active_propname, index
+    ):
+        row = layout.row(align=True)
+        action = item.action
+
+        if action != None:
+            row.prop(item, "selected", text="")
+            row.prop(action, "name", text="", emboss=False, icon="ACTION")
+        else:
+            row.label(text="Missing Action", icon="ERROR")
 
 class RGE_PT_nla_action_loader(bpy.types.Panel):
     bl_label = "NLA Action Loader"
@@ -160,19 +179,19 @@ class RGE_PT_nla_action_loader(bpy.types.Panel):
 
         layout.separator()
 
-        filtered_actions = find_conflicting_action_items(context)
-        filtered_action_count = len(filtered_actions)
-        if filtered_action_count > 0:
-            header, body = layout.panel("filtered_action_items_subpanel", default_closed=True)
+        existing_actions = find_existing_nla_actions(context)
+        existing_action_count = len(existing_actions)
+        if existing_action_count > 0:
+            header, body = layout.panel("existing_action_items_subpanel", default_closed=True)
 
             selected_action_item_count = len([action_item for action_item in scene.RGE_actions_to_load if action_item.selected])
-            if filtered_action_count == selected_action_item_count:
+            if existing_action_count == selected_action_item_count:
                 header.label(text="All Actions Already Exist in Rigify Rig NLA")
             else:
-                header.label(text=f"{filtered_action_count} out of {selected_action_item_count} Actions Already Exist in Rigify Rig NLA")
+                header.label(text=f"{existing_action_count} out of {selected_action_item_count} Actions Already Exist in Rigify Rig NLA")
 
             if body != None:
-                for action_item in filtered_actions:
+                for action_item in existing_actions:
                     body.label(text=action_item.action.name, icon="ACTION")
 
                 layout.separator()
@@ -187,6 +206,8 @@ classes = (
     RGE_OT_select_all_actions,
     RGE_OT_clear_selected_actions,
     RGE_OT_load_actions_to_nla,
+    RGE_PG_action_item,
+    RGE_UL_action_items,
     RGE_PT_nla_action_loader,
 )
 
@@ -194,7 +215,7 @@ def register():
     for cls in classes:
         bpy.utils.register_class(cls)
 
-    bpy.types.Scene.RGE_actions_to_load = bpy.props.CollectionProperty(type=common.RGE_PG_action_item)
+    bpy.types.Scene.RGE_actions_to_load = bpy.props.CollectionProperty(type=RGE_PG_action_item)
     bpy.types.Scene.RGE_actions_to_load_index = bpy.props.IntProperty()
 
 def unregister():

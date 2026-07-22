@@ -1,9 +1,14 @@
 import bpy
+from bpy_extras import anim_utils
 
 from . import common
 
 def is_bone_kept(bone):
     return bone.select or bone.use_deform
+
+# TODO hardcoded
+def renamed_action(name):
+    return name.replace("CTRL_", "")
 
 class RGE_OT_generate_game_rig(bpy.types.Operator):
     bl_idname = "rigify_game_exporter.generate_game_rig"
@@ -20,6 +25,12 @@ class RGE_OT_generate_game_rig(bpy.types.Operator):
         if rigify_rig == None or common.find_game_rig() != None:
             return {'CANCELLED'}
 
+        game_rig = self.generate_rig(context, rigify_rig)
+        self.bake_actions(context, rigify_rig, game_rig)
+
+        return {"FINISHED"}
+
+    def generate_rig(self, context, rigify_rig):
         is_object_hidden = rigify_rig.hide_get()
         is_object_hidden_in_viewport = rigify_rig.hide_viewport
         rigify_rig.hide_viewport = False
@@ -140,10 +151,108 @@ class RGE_OT_generate_game_rig(bpy.types.Operator):
 
         game_rig.hide_render = False
 
-        return {"FINISHED"}
+        return game_rig
+
+    def bake_actions(self, context, rigify_rig, game_rig):
+        if rigify_rig.animation_data == None:
+            self.report({'INFO'}, f"Rigify rig ({rigify_rig.name}) doesn't contain animation data, nothing to bake.")
+            return
+
+        rigify_rig_use_nla_backup = rigify_rig.animation_data.use_nla
+        rigify_rig.animation_data.use_nla = False
+        rigify_rig_action_backup = rigify_rig.animation_data.action
+
+        actions_to_bake = []
+        if rigify_rig != None and rigify_rig.animation_data != None:
+            for nla_track in rigify_rig.animation_data.nla_tracks:
+                for nla_strip in nla_track.strips:
+                    nla_action = nla_strip.action
+                    if nla_action and nla_action not in actions_to_bake:
+                        actions_to_bake.append(nla_action)
+
+        for action in actions_to_bake:
+            rigify_rig.animation_data.action = action
+            start_frame = int(action.frame_range[0])
+            end_frame = int(action.frame_range[1]) + 1
+
+            # TODO not sure if this is needed
+            context.scene.frame_current = start_frame
+            context.view_layer.update()
+
+            baked_action = anim_utils.bake_action(
+                game_rig,
+                action=None,
+                frames=range(start_frame, end_frame),
+                bake_options=anim_utils.BakeOptions(
+                    only_selected=False,
+                    do_pose=True,
+                    do_object=False,
+                    do_visual_keying=True,
+                    do_constraint_clear=False,
+                    do_parents_clear=False,
+                    do_clean=True,
+                    do_location=True,
+                    do_rotation=True,
+                    do_scale=True,
+                    do_bbone=True,
+                    do_custom_props=True,
+                ),
+            )
+
+            baked_action.name = renamed_action(action.name)
+
+            # create NLA track and strip
+            track = game_rig.animation_data.nla_tracks.new()
+            track.name = baked_action.name
+            track.strips.new(baked_action.name, int(baked_action.frame_range[0]), baked_action)
+
+        # mute game rig constraints
+        for bone in game_rig.pose.bones:
+            for constraint in bone.constraints:
+                constraint.mute = True
+
+        # restore rigify rig settings
+        rigify_rig.animation_data.action = rigify_rig_action_backup
+        if rigify_rig_use_nla_backup is not None:
+            rigify_rig.animation_data.use_nla = rigify_rig_use_nla_backup
+
+class RGE_PT_game_rig_generator(bpy.types.Panel):
+    bl_label = "Game Rig Generator"
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category = "Rigify Game Exporter"
+
+    def draw(self, context):
+        layout = self.layout
+        rigify_rig = common.find_rigify_rig()
+
+        if rigify_rig == None:
+            box = layout.box()
+            box.label(text=f"Cannot find Rigify Rig ({common.RIGIFY_RIG_NAME})", icon="ERROR")
+            return
+
+        # show list of selected bones (can only do it when in pose mode)
+        if context.mode == 'POSE' and context.object == rigify_rig:
+            selected = context.selected_pose_bones or []
+
+            if len(selected) > 0:
+                header, body = layout.panel("selected_bones_subpanel", default_closed=True)
+                header.label(text=f"{len(selected)} Extra Bone(s) Selected")
+                if body != None:
+                    for bone in sorted(selected, key=lambda b: b.name):
+                        body.label(text=bone.name, icon='BONE_DATA')
+
+                    layout.separator()
+
+        col = layout.column(align=True)
+        col.scale_y = 2
+        col.operator("rigify_game_exporter.generate_game_rig", icon="OUTLINER_OB_ARMATURE")
 
 
-classes = [RGE_OT_generate_game_rig]
+classes = (
+    RGE_OT_generate_game_rig,
+    RGE_PT_game_rig_generator,
+)
 
 def register():
     for cls in classes:
