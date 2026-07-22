@@ -216,6 +216,9 @@ class RGE_OT_generate_game_rig(bpy.types.Operator):
         if rigify_rig_use_nla_backup is not None:
             rigify_rig.animation_data.use_nla = rigify_rig_use_nla_backup
 
+        # hide rigify rig
+        rigify_rig.hide_viewport = True
+
 class RGE_PT_game_rig_generator(bpy.types.Panel):
     bl_label = "Game Rig Generator"
     bl_space_type = "VIEW_3D"
