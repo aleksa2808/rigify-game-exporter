@@ -163,7 +163,7 @@ class RGE_OT_generate_game_rig(bpy.types.Operator):
         rigify_rig_action_backup = rigify_rig.animation_data.action
 
         actions_to_bake = []
-        if rigify_rig != None and rigify_rig.animation_data != None:
+        if rigify_rig.animation_data != None:
             for nla_track in rigify_rig.animation_data.nla_tracks:
                 for nla_strip in nla_track.strips:
                     nla_action = nla_strip.action
@@ -172,6 +172,7 @@ class RGE_OT_generate_game_rig(bpy.types.Operator):
 
         for action in actions_to_bake:
             rigify_rig.animation_data.action = action
+            rigify_rig.animation_data.action_slot = action.slots[0]
             start_frame = int(action.frame_range[0])
             end_frame = int(action.frame_range[1]) + 1
 
