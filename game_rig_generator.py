@@ -218,6 +218,7 @@ class RGE_OT_generate_game_rig(bpy.types.Operator):
 
         # hide rigify rig
         rigify_rig.hide_viewport = True
+        rigify_rig.hide_render = True
 
 class RGE_PT_game_rig_generator(bpy.types.Panel):
     bl_label = "Game Rig Generator"
